@@ -4,53 +4,50 @@ import cors from "cors";
 import OpenAI from "openai";
 
 dotenv.config();
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Initialize OpenAI client
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Endpoint for chatting with your Ayurveda assistant
+// Route to check if backend is alive
+app.get("/", (req, res) => {
+  res.send("✅ Ayurveda Bot Backend is running successfully!");
+});
+
+// Route to send messages to your OpenAI Assistant
 app.post("/chat", async (req, res) => {
   try {
-    const { message, threadId } = req.body;
+    const { message } = req.body;
 
-    let thread;
-    // If frontend has no existing thread, create one
-    if (!threadId) {
-      thread = await client.beta.threads.create();
-    } else {
-      thread = { id: threadId };
+    if (!message) {
+      return res.status(400).json({ error: "Message is required." });
     }
 
-    // Add user message
-    await client.beta.threads.messages.create(thread.id, {
-      role: "user",
-      content: message,
+    // Create a thread if needed or use existing one (simplified single-turn)
+    const response = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an Ayurveda expert helping users with holistic, herbal, and lifestyle-based health advice.",
+        },
+        { role: "user", content: message },
+      ],
     });
 
-    // Run assistant
-    const run = await client.beta.threads.runs.createAndPoll(thread.id, {
-      assistant_id: process.env.ASSISTANT_ID,
-    });
-
-    // Fetch messages
-    const messages = await client.beta.threads.messages.list(thread.id);
-
-    // Get latest message (assistant’s reply)
-    const reply = messages.data[0].content[0].text.value;
-
-    res.json({
-      reply,
-      threadId: thread.id,
-    });
+    const botReply = response.choices[0].message.content;
+    res.json({ reply: botReply });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Something went wrong" });
+    console.error("Chat error:", error);
+    res.status(500).json({ error: "Failed to process the message." });
   }
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
