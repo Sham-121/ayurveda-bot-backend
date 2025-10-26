@@ -39,7 +39,7 @@ app.post("/chat", async (req, res) => {
 
     // Send request to your trained Ayurveda assistant
     const response = await client.chat.completions.create({
-      model: "gpt-4o-mini-assistant", // base model that supports assistants
+      model: "gpt-4o-mini", // base model that supports assistants
       assistant: process.env.ASSISTANT_ID,
       input: message,
     });
