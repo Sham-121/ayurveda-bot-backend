@@ -53,22 +53,39 @@ app.post("/chat", async (req, res) => {
     });
     console.log("Run created:", run.id);
 
-    // Poll for completion with better error handling
-    let runStatus = await client.beta.threads.runs.retrieve(threadId, run.id);
+    // Poll for completion - FIXED: correct parameter order
     let attempts = 0;
-    const maxAttempts = 60; // Increased timeout
-    const pollInterval = 1000; // 1 second
+    const maxAttempts = 60;
+    const pollInterval = 1000;
 
     while (attempts < maxAttempts) {
-      runStatus = await client.beta.threads.runs.retrieve(threadId, run.id);
+      // ✅ CORRECT ORDER: (threadId, runId)
+      const runStatus = await client.beta.threads.runs.retrieve(threadId, run.id);
       console.log(`Poll attempt ${attempts + 1}: status = ${runStatus.status}`);
 
       if (runStatus.status === 'completed') {
-        break;
+        // Get response with validation
+        const threadMessages = await client.beta.threads.messages.list(threadId);
+        
+        if (!threadMessages.data || threadMessages.data.length === 0) {
+          throw new Error('No messages returned from assistant');
+        }
+
+        const latestMessage = threadMessages.data[0];
+        if (!latestMessage.content || latestMessage.content.length === 0) {
+          throw new Error('Assistant message has no content');
+        }
+
+        const botReply = latestMessage.content[0].text.value;
+        return res.json({ reply: botReply });
       }
 
-      if (runStatus.status === 'failed' || runStatus.status === 'cancelled' || runStatus.status === 'expired') {
-        throw new Error(`Run ${runStatus.status}: ${runStatus.last_error?.message || 'Unknown error'}`);
+      if (runStatus.status === 'failed') {
+        throw new Error(`Run failed: ${runStatus.last_error?.message || 'Unknown error'}`);
+      }
+
+      if (runStatus.status === 'cancelled' || runStatus.status === 'expired') {
+        throw new Error(`Run ${runStatus.status}`);
       }
 
       if (runStatus.status === 'requires_action') {
@@ -79,41 +96,21 @@ app.post("/chat", async (req, res) => {
       attempts++;
     }
 
-    if (runStatus.status !== 'completed') {
-      throw new Error(`Assistant run timed out after ${maxAttempts} attempts. Status: ${runStatus.status}`);
-    }
-
-    // Get response with validation
-    const threadMessages = await client.beta.threads.messages.list(threadId);
-    
-    if (!threadMessages.data || threadMessages.data.length === 0) {
-      throw new Error('No messages returned from assistant');
-    }
-
-    const latestMessage = threadMessages.data[0];
-    if (!latestMessage.content || latestMessage.content.length === 0) {
-      throw new Error('Assistant message has no content');
-    }
-
-    const botReply = latestMessage.content[0].text.value;
-
-    res.json({ reply: botReply });
+    throw new Error(`Assistant run timed out after ${maxAttempts} seconds`);
 
   } catch (err) {
-    console.error("Chat error:", err.message, err.stack);
+    console.error("Chat error:", err.message);
     
-    // Return more specific error messages
     const errorMessage = err.message || "Failed to process message";
     res.status(500).json({ 
       error: errorMessage,
       details: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   } finally {
-    // Optional: Clean up thread (OpenAI has limits on thread count)
-    // Uncomment if you want to delete threads after each conversation
+    // Optional: Clean up thread after conversation
     if (threadId) {
       try {
-        await client.beta.threads.del(threadId);
+        await client.beta.threads.delete(threadId); // ✅ FIXED: use delete() not del()
         console.log("Thread deleted:", threadId);
       } catch (delErr) {
         console.error("Failed to delete thread:", delErr.message);
