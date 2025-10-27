@@ -19,6 +19,9 @@ if (!OPENAI_API_KEY || !ASSISTANT_ID) {
 
 const client = new OpenAI({ apiKey: OPENAI_API_KEY });
 
+// Log SDK version on startup
+console.log("OpenAI SDK initialized");
+
 app.get("/", (req, res) => {
   res.send("✅ Ayurveda Bot Backend is running!");
 });
@@ -34,7 +37,7 @@ app.post("/chat", async (req, res) => {
 
     console.log("Creating thread...");
     const thread = await client.beta.threads.create();
-    threadId = thread.id; // Store thread ID
+    threadId = thread.id;
     console.log("Thread created:", threadId);
 
     // Add messages to thread
@@ -47,63 +50,56 @@ app.post("/chat", async (req, res) => {
       }
     }
 
-    console.log("Creating run...");
-    const run = await client.beta.threads.runs.create(threadId, {
-      assistant_id: ASSISTANT_ID,
-    });
-    const runId = run.id; // Store run ID separately for clarity
-    console.log("Run created:", runId);
-    console.log("Starting to poll with threadId:", threadId, "runId:", runId); // Debug
+    console.log("Creating and polling run...");
+    
+    // Use createAndPoll - simpler and more reliable
+    const run = await client.beta.threads.runs.createAndPoll(
+      threadId,
+      { 
+        assistant_id: ASSISTANT_ID 
+      },
+      { 
+        pollIntervalMs: 1000 
+      }
+    );
 
-    // Poll for completion
-    let attempts = 0;
-    const maxAttempts = 60;
-    const pollInterval = 1000;
+    console.log("Run completed with status:", run.status);
 
-    while (attempts < maxAttempts) {
-      // CRITICAL: First parameter is threadId, second is runId
-      const runStatus = await client.beta.threads.runs.retrieve(threadId, runId);
-      console.log(`Poll attempt ${attempts + 1}: status = ${runStatus.status}`);
-
-      if (runStatus.status === 'completed') {
-        // Get response
-        const threadMessages = await client.beta.threads.messages.list(threadId);
-        
-        if (!threadMessages.data || threadMessages.data.length === 0) {
-          throw new Error('No messages returned from assistant');
-        }
-
-        const latestMessage = threadMessages.data[0];
-        if (!latestMessage.content || latestMessage.content.length === 0) {
-          throw new Error('Assistant message has no content');
-        }
-
-        const botReply = latestMessage.content[0].text.value;
-        console.log("✅ Successfully got reply");
-        return res.json({ reply: botReply });
+    if (run.status === 'completed') {
+      // Get response
+      const threadMessages = await client.beta.threads.messages.list(threadId);
+      
+      if (!threadMessages.data || threadMessages.data.length === 0) {
+        throw new Error('No messages returned from assistant');
       }
 
-      if (runStatus.status === 'failed') {
-        throw new Error(`Run failed: ${runStatus.last_error?.message || 'Unknown error'}`);
+      const latestMessage = threadMessages.data[0];
+      if (!latestMessage.content || latestMessage.content.length === 0) {
+        throw new Error('Assistant message has no content');
       }
 
-      if (runStatus.status === 'cancelled' || runStatus.status === 'expired') {
-        throw new Error(`Run ${runStatus.status}`);
-      }
-
-      if (runStatus.status === 'requires_action') {
-        throw new Error('Run requires action - function calling not implemented');
-      }
-
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-      attempts++;
+      const botReply = latestMessage.content[0].text.value;
+      console.log("✅ Successfully got reply");
+      return res.json({ reply: botReply });
     }
 
-    throw new Error(`Assistant run timed out after ${maxAttempts} seconds`);
+    if (run.status === 'failed') {
+      throw new Error(`Run failed: ${run.last_error?.message || 'Unknown error'}`);
+    }
+
+    if (run.status === 'cancelled' || run.status === 'expired') {
+      throw new Error(`Run ${run.status}`);
+    }
+
+    if (run.status === 'requires_action') {
+      throw new Error('Run requires action - function calling not implemented');
+    }
+
+    throw new Error(`Unexpected run status: ${run.status}`);
 
   } catch (err) {
     console.error("❌ Chat error:", err.message);
-    console.error("Stack:", err.stack);
+    console.error("Error stack:", err.stack);
     
     const errorMessage = err.message || "Failed to process message";
     res.status(500).json({ 
