@@ -34,7 +34,7 @@ app.post("/chat", async (req, res) => {
 
     console.log("Creating thread...");
     const thread = await client.beta.threads.create();
-    threadId = thread.id;
+    threadId = thread.id; // Store thread ID
     console.log("Thread created:", threadId);
 
     // Add messages to thread
@@ -51,20 +51,22 @@ app.post("/chat", async (req, res) => {
     const run = await client.beta.threads.runs.create(threadId, {
       assistant_id: ASSISTANT_ID,
     });
-    console.log("Run created:", run.id);
+    const runId = run.id; // Store run ID separately for clarity
+    console.log("Run created:", runId);
+    console.log("Starting to poll with threadId:", threadId, "runId:", runId); // Debug
 
-    // Poll for completion - FIXED: correct parameter order
+    // Poll for completion
     let attempts = 0;
     const maxAttempts = 60;
     const pollInterval = 1000;
 
     while (attempts < maxAttempts) {
-      // ✅ CORRECT ORDER: (threadId, runId)
-      const runStatus = await client.beta.threads.runs.retrieve(threadId, run.id);
+      // CRITICAL: First parameter is threadId, second is runId
+      const runStatus = await client.beta.threads.runs.retrieve(threadId, runId);
       console.log(`Poll attempt ${attempts + 1}: status = ${runStatus.status}`);
 
       if (runStatus.status === 'completed') {
-        // Get response with validation
+        // Get response
         const threadMessages = await client.beta.threads.messages.list(threadId);
         
         if (!threadMessages.data || threadMessages.data.length === 0) {
@@ -77,6 +79,7 @@ app.post("/chat", async (req, res) => {
         }
 
         const botReply = latestMessage.content[0].text.value;
+        console.log("✅ Successfully got reply");
         return res.json({ reply: botReply });
       }
 
@@ -99,18 +102,18 @@ app.post("/chat", async (req, res) => {
     throw new Error(`Assistant run timed out after ${maxAttempts} seconds`);
 
   } catch (err) {
-    console.error("Chat error:", err.message);
+    console.error("❌ Chat error:", err.message);
+    console.error("Stack:", err.stack);
     
     const errorMessage = err.message || "Failed to process message";
     res.status(500).json({ 
-      error: errorMessage,
-      details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      error: errorMessage
     });
   } finally {
-    // Optional: Clean up thread after conversation
+    // Clean up thread
     if (threadId) {
       try {
-        await client.beta.threads.delete(threadId); // ✅ FIXED: use delete() not del()
+        await client.beta.threads.delete(threadId);
         console.log("Thread deleted:", threadId);
       } catch (delErr) {
         console.error("Failed to delete thread:", delErr.message);
